@@ -18,6 +18,14 @@ and  thriftContainerTypes =
   | ListType of thriftFieldType
 
 
+let to_thrift_fieldtype (str : string) : thriftFieldType = match str with
+  | "bool"   -> BaseTypes (ThBool)
+  | "int"    -> BaseTypes (Thi32)
+  | "float"  -> BaseTypes (ThDouble)
+  | "string" -> BaseTypes (ThString)
+  | _        -> Id str
+
+
 type thriftException = 
   {
     name: string;
@@ -62,12 +70,12 @@ and thrift_containertypes_to_string (ct : thriftContainerTypes) : string = match
 let thrift_exception_to_string (ex : thriftException) : string =
   let str = "exception " ^ ex.name ^ " {\n" in
   let f = fun (name, fld) s -> s ^ thrift_field_to_string (fld) ^ " " ^ name ^ ";\n"
-  in List.fold_right f ex.defs str
+  in (List.fold_right f ex.defs str) ^ "}\n"
  
 let thrift_struct_to_string (st : thriftStruct) : string = 
   let str = "struct " ^ st.name ^ " {\n" in
   let f = fun (name, fld) s -> s ^ thrift_field_to_string (fld) ^ " " ^ name ^ ";\n"
-  in List.fold_right f st.defs str
+  in (List.fold_right f st.defs str) ^ "}\n"
 
 let thrift_stmt_to_string (stmt : thriftStmt) : string = match stmt with
   | Exception ex -> thrift_exception_to_string ex ^ "\n"
@@ -79,20 +87,34 @@ let to_thrift_code (ast : thriftAST) : string =
   List.fold_left (fun str stmt -> str ^ thrift_stmt_to_string stmt) "" ast
 
 
+let longident_to_string (lit : Longident.t) : string =
+  match lit with
+    | Lident (str) -> str
+    | Ldot (_, _) -> failwith "Ldot NYI"
+    | Lapply (_, _) -> failwith "Lapply NYI"
+
+
 let rec _process_core_type (ct : Parsetree.core_type) : thriftFieldType list =
   let open Parsetree in
   match ct.ptyp_desc with
-    | Ptyp_any -> failwith "NYI"
+    | Ptyp_any -> failwith "Ptyp_any NYI"
     | Ptyp_var (str) -> Id str :: []
-    | Ptyp_arrow (lbl, ct1, ct2) -> failwith "NYI"
+    | Ptyp_arrow (lbl, ct1, ct2) -> failwith "Ptyp_arrow NYI"
     | Ptyp_tuple (ctlst) -> (List.fold_right process_core_type ctlst [])
-    | Ptyp_constr (loc, ctlst) -> failwith "NYI"
-    | Ptyp_object (cftlst) -> failwith "NYI"
-    | Ptyp_class (loc, ctlst, lbllst) -> failwith "NYI"
-    | Ptyp_alias (ct, str) -> failwith "NYI"
-    | Ptyp_variant (rflst, flag, lbllstoptn) -> failwith "NYI"
-    | Ptyp_poly (strlst, ct) -> failwith "NYI"
-    | Ptyp_package (pkgtyp) -> failwith "NYI"
+
+    (* XXX : Not sure if constr is correct *)
+    | Ptyp_constr (loc, ctlst) -> 
+        (* (List.fold_right process_core_type ctlst []) *)
+        to_thrift_fieldtype (longident_to_string loc.txt) :: []
+
+    | Ptyp_object (cftlst) -> failwith "PTyp_object NYI"
+    | Ptyp_class (loc, ctlst, lbllst) -> failwith "PTyp_class NYI"
+    | Ptyp_alias (ct, str) -> failwith "PTyp_alias NYI"
+    | Ptyp_variant (rflst, flag, lbllstoptn) -> failwith "Ptyp_variant NYI"
+
+    (* XXX : not sure if poly is correct, strlst is not bieng used at all *)
+    | Ptyp_poly (strlst, ct) -> _process_core_type ct
+    | Ptyp_package (pkgtyp) -> failwith "Ptyp_package NYI"
 
 and process_core_type (ct : Parsetree.core_type) (acc : thriftFieldType list) : thriftFieldType list = 
   _process_core_type ct @ acc
@@ -108,10 +130,10 @@ let process_record ((name, _, ct, _) : (string Asttypes.loc   *
                                         Parsetree.core_type   * 
                                         Location.t)) (acc : (string * thriftFieldType) list) : (string * thriftFieldType) list =
   match _process_core_type ct with
-    | [] -> failwith "Not expected"
+    | [] -> []
     | x :: [] -> (name.txt, x) :: acc
     | _ -> failwith "Not expected"
-  
+
 
 
 (* Should return a structure *)
@@ -120,7 +142,7 @@ let process_types ((loc, type_decl) : string Asttypes.loc * Parsetree.type_decla
   match type_decl.ptype_kind with
     | Ptype_abstract -> failwith "ignore"
       
-      (* Need to use unions *)
+      (* XXX : Need to use unions *)
     | Ptype_variant (cnstr_lst) -> failwith "NYI"
 
     | Ptype_record (lbl_dcl_lst) -> 
@@ -132,7 +154,7 @@ let process_types ((loc, type_decl) : string Asttypes.loc * Parsetree.type_decla
         in (Struct (strct) :: acc)
 
 
-let process_sig_elem (acc : thriftAST) (sig_i : Parsetree.signature_item) : thriftAST = 
+let process_sig_elem (sig_i : Parsetree.signature_item) (acc : thriftAST): thriftAST = 
   match sig_i.psig_desc with
   | Psig_type type_decls -> 
       (List.fold_right process_types type_decls []) @ acc
@@ -150,7 +172,7 @@ let process_sig_elem (acc : thriftAST) (sig_i : Parsetree.signature_item) : thri
 
 
 let to_thrift_ast (sig_ast : Parsetree.signature) : thriftAST = 
-  List.fold_left process_sig_elem [] sig_ast 
+  List.fold_right process_sig_elem sig_ast []
   
 let to_ast inputfile =
   let ic = open_in_bin inputfile in
@@ -163,6 +185,9 @@ let main () =
                     then Sys.argv.(1)
                     else failwith "Filename not provided"
   in let ast = to_ast in_filename
-  in to_thrift_ast ast
+  (*inlet ppf = Format.err_formatter
+  in Format.fprintf ppf "%a@." Printast.interface ast; *)
+  in let thrift_ast = to_thrift_ast ast
+  in print_endline (to_thrift_code thrift_ast)
 
 let _ = main ()
