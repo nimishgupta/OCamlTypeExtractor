@@ -17,7 +17,6 @@ and  thriftContainerTypes =
   | SetType of thriftFieldType
   | ListType of thriftFieldType
 
-
 let to_thrift_fieldtype (str : string) : thriftFieldType = match str with
   | "bool"   -> BaseTypes (ThBool)
   | "int"    -> BaseTypes (Thi32)
@@ -40,7 +39,7 @@ type thriftStruct =
 
 type thriftStmt =
   | Exception of thriftException
-  | Typedef   of thriftFieldType
+  | Typedef   of thriftFieldType * string
   | Struct    of thriftStruct
   | Empty
 
@@ -79,8 +78,8 @@ let thrift_struct_to_string (st : thriftStruct) : string =
 
 let thrift_stmt_to_string (stmt : thriftStmt) : string = match stmt with
   | Exception ex -> thrift_exception_to_string ex ^ "\n"
-  | Typedef td -> failwith "NYI"
-  | Struct st -> thrift_struct_to_string st ^ "\n"
+  | Typedef (typ, id) -> "typedef " ^ (thrift_field_to_string typ) ^ " " ^ id ^ "\n"
+  | Struct st -> thrift_struct_to_string st ^ "\n" 
   | Empty -> "\n"
 
 let to_thrift_code (ast : thriftAST) : string =
@@ -130,22 +129,29 @@ let process_record ((name, _, ct, _) : (string Asttypes.loc   *
                                         Parsetree.core_type   * 
                                         Location.t)) (acc : (string * thriftFieldType) list) : (string * thriftFieldType) list =
   match _process_core_type ct with
-    | [] -> []
+    | [] -> acc
     | x :: [] -> (name.txt, x) :: acc
-    | _ -> failwith "Not expected"
+    | _ -> failwith "Not supported"
 
 
 
 (* Should return a structure *)
 let process_types ((loc, type_decl) : string Asttypes.loc * Parsetree.type_declaration) (acc : thriftAST) : thriftAST = 
   let open Parsetree in
-  match type_decl.ptype_kind with
-    | Ptype_abstract -> failwith "ignore"
+  match type_decl.ptype_kind, type_decl.ptype_manifest with
+    | Ptype_abstract, None -> failwith ("Abstract types with no manifests not entertained");
+    | Ptype_abstract, Some ct -> 
+        (match _process_core_type ct with
+          | [] -> failwith "empty typedef not expected"
+          | x :: [] -> (Typedef (x, loc.txt)) :: acc
+          | _ -> failwith "Multiple typedefs not parsing")
       
       (* XXX : Need to use unions *)
-    | Ptype_variant (cnstr_lst) -> failwith "NYI"
+      (* TODO : ignored manifest for now *)
+    | Ptype_variant (cnstr_lst), _ -> failwith "NYI"
 
-    | Ptype_record (lbl_dcl_lst) -> 
+      (* TODO : ignored manifest for now *)
+    | Ptype_record (lbl_dcl_lst), _ -> 
         let strct = 
                     { 
                       name = loc.txt;
@@ -185,9 +191,9 @@ let main () =
                     then Sys.argv.(1)
                     else failwith "Filename not provided"
   in let ast = to_ast in_filename
-  (*inlet ppf = Format.err_formatter
-  in Format.fprintf ppf "%a@." Printast.interface ast; *)
-  in let thrift_ast = to_thrift_ast ast
+  in let ppf = Format.err_formatter
+  in Format.fprintf ppf "%a@." Printast.interface ast;
+  let thrift_ast = to_thrift_ast ast
   in print_endline (to_thrift_code thrift_ast)
 
 let _ = main ()
