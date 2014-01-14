@@ -1,0 +1,47 @@
+OASISFormat: 0.3
+Name:        OcamlTypeExtractor
+Version:     0.1
+Synopsis:    Plays with type declarations in mli files
+Authors:     nimishgupta
+License:     MIT
+
+Executable ote
+  Path:       .
+  BuildTools: ocamlbuild
+  MainIs:     main.ml
+  BuildDepends:
+    compiler-libs.common
+  
+  (*
+Library parsing
+  Path:       parsing
+  Modules:
+    Ast_helper,
+    Ast_mapper,
+    Asttypes,
+    Lexer,
+    Location,
+    Longident,
+    Parse,
+    Parser,
+    Parsetree,
+    Pprintast,
+    Printast,
+    Syntaxerr
+  BuildDepends:
+    utils
+  BuildTools: ocamlbuild
+
+Library utils
+  Path:       utils
+  Modules:
+    Ccomp,
+    Clflags,
+    Config,
+    Consistbl,
+    Misc,
+    Tbl,
+    Terminfo,
+    Warnings
+  BuildTools: ocamlbuild
+  *)
