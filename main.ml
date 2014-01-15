@@ -17,13 +17,6 @@ and  thriftContainerTypes =
   | SetType of thriftFieldType
   | ListType of thriftFieldType
 
-let to_thrift_fieldtype (str : string) : thriftFieldType = match str with
-  | "bool"   -> BaseTypes (ThBool)
-  | "int"    -> BaseTypes (Thi32)
-  | "float"  -> BaseTypes (ThDouble)
-  | "string" -> BaseTypes (ThString)
-  | _        -> Id str
-
 
 type thriftException = 
   {
@@ -37,13 +30,35 @@ type thriftStruct =
     defs : (string * thriftFieldType) list;
   }
 
+type thriftUnion = 
+  { 
+    name: string;
+    defs : (string * thriftFieldType) list;
+  }
+
+type thriftEnum =
+  { 
+    name: string;
+    defs : string list;
+  }
+
 type thriftStmt =
   | Exception of thriftException
   | Typedef   of thriftFieldType * string
   | Struct    of thriftStruct
+  | Enum      of thriftEnum
+  | Union     of thriftUnion
   | Empty
 
 type thriftAST = thriftStmt list
+
+
+let to_thrift_fieldtype (str : string) : thriftFieldType = match str with
+  | "bool"   -> BaseTypes (ThBool)
+  | "int"    -> BaseTypes (Thi32)
+  | "float"  -> BaseTypes (ThDouble)
+  | "string" -> BaseTypes (ThString)
+  | _        -> Id str
 
 
 let thrift_basetypes_to_string (bt : thriftBaseTypes) : string = match bt with
@@ -66,21 +81,31 @@ and thrift_containertypes_to_string (ct : thriftContainerTypes) : string = match
   | SetType (fld) -> "set <" ^ thrift_field_to_string fld ^ ">"
   | ListType (fld) -> "list <" ^ thrift_field_to_string fld ^ ">"
 
+
 let thrift_exception_to_string (ex : thriftException) : string =
   let str = "exception " ^ ex.name ^ " {\n" in
   let f = fun (name, fld) s -> s ^ thrift_field_to_string (fld) ^ " " ^ name ^ ";\n"
   in (List.fold_right f ex.defs str) ^ "}\n"
  
+
 let thrift_struct_to_string (st : thriftStruct) : string = 
   let str = "struct " ^ st.name ^ " {\n" in
   let f = fun (name, fld) s -> s ^ thrift_field_to_string (fld) ^ " " ^ name ^ ";\n"
   in (List.fold_right f st.defs str) ^ "}\n"
 
+let thrift_enum_to_string (en : thriftEnum) : string =
+  let str = "enum " ^ en.name ^ "{\n" in
+  (List.fold_right (fun fld s -> s ^ fld ^ ",\n") en.defs str) ^ "}\n"
+
+
 let thrift_stmt_to_string (stmt : thriftStmt) : string = match stmt with
   | Exception ex -> thrift_exception_to_string ex ^ "\n"
   | Typedef (typ, id) -> "typedef " ^ (thrift_field_to_string typ) ^ " " ^ id ^ "\n"
-  | Struct st -> thrift_struct_to_string st ^ "\n" 
+  | Struct st -> (thrift_struct_to_string st) ^ "\n" 
+  | Enum en -> (thrift_enum_to_string en) ^ "\n"
+  | Union un -> failwith "union to_string NYI"
   | Empty -> "\n"
+
 
 let to_thrift_code (ast : thriftAST) : string =
   List.fold_left (fun str stmt -> str ^ thrift_stmt_to_string stmt) "" ast
@@ -111,7 +136,7 @@ let rec _process_core_type (ct : Parsetree.core_type) : thriftFieldType list =
     | Ptyp_alias (ct, str) -> failwith "PTyp_alias NYI"
     | Ptyp_variant (rflst, flag, lbllstoptn) -> failwith "Ptyp_variant NYI"
 
-    (* XXX : not sure if poly is correct, strlst is not bieng used at all *)
+    (* XXX : not sure if poly is correct, strlst is not being used at all *)
     | Ptyp_poly (strlst, ct) -> _process_core_type ct
     | Ptyp_package (pkgtyp) -> failwith "Ptyp_package NYI"
 
@@ -134,25 +159,44 @@ let process_record ((name, _, ct, _) : (string Asttypes.loc   *
     | _ -> failwith "Not supported"
 
 
+let is_enum (constr_lst): bool = 
+  List.for_all (fun (_, ctlst, _, _) -> 0 = List.length ctlst) constr_lst
 
+let to_thrift_enum (name: string) (cnstr_lst) : thriftStmt = 
+  let enm = {
+              name = name;
+              defs = List.fold_right (fun (nm, _, _, _) lst -> nm.Asttypes.txt::lst) cnstr_lst []
+            }
+  in Enum enm 
+
+(* TODO : Need to create structures out of constructors *)
+let to_thrift_union (name: string) (cnstr_lst) : thriftStmt =
+  failwith "union support: NYI"
+              
+let process_variant (name: string) (cnstr_lst) : thriftStmt =
+  if is_enum cnstr_lst
+  then to_thrift_enum name cnstr_lst
+  else to_thrift_union name cnstr_lst
+  
+  
 (* Should return a structure *)
 let process_types ((loc, type_decl) : string Asttypes.loc * Parsetree.type_declaration) (acc : thriftAST) : thriftAST = 
   let open Parsetree in
   match type_decl.ptype_kind, type_decl.ptype_manifest with
     | Ptype_abstract, None -> failwith ("Abstract types with no manifests not entertained");
     | Ptype_abstract, Some ct -> 
+        (* TODO : check if other states are possible *)
         (match _process_core_type ct with
           | [] -> failwith "empty typedef not expected"
           | x :: [] -> (Typedef (x, loc.txt)) :: acc
           | _ -> failwith "Multiple typedefs not parsing")
       
-      (* XXX : Need to use unions *)
-      (* TODO : ignored manifest for now *)
-    | Ptype_variant (cnstr_lst), _ -> failwith "NYI"
+    (* TODO : ignored manifest for now *)
+    | Ptype_variant (cnstr_lst), _ -> (process_variant loc.txt cnstr_lst) :: acc
 
       (* TODO : ignored manifest for now *)
     | Ptype_record (lbl_dcl_lst), _ -> 
-        let strct = 
+        let strct: thriftStruct  = 
                     { 
                       name = loc.txt;
                       defs = (List.fold_right process_record lbl_dcl_lst [])
